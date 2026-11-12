@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <KeePassPath Condition="'$(KeePassPath)' == ''">$(MSBuildProjectDirectory)/../KeePass-2.X/KeePass.exe</KeePassPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="CustomIconDashboarderPlugin"><HintPath>../bin/Release/CustomIconDashboarderPlugin.dll</HintPath></Reference>
+    <Reference Include="KeePass"><HintPath>$(KeePassPath)</HintPath></Reference>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+</Project>

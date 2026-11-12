@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <PropertyGroup>
     <ProjectGuid>{6089EB1A-29CD-4CFF-8CF8-C9D0E2CEFAB1}</ProjectGuid>
@@ -21,7 +21,6 @@
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
     <WarningLevel>4</WarningLevel>
     <RunCodeAnalysis>False</RunCodeAnalysis>
-    <SourceAnalysisOverrideSettingsFile>C:\Users\Matthieu\AppData\Roaming\ICSharpCode/SharpDevelop4\Settings.SourceAnalysis</SourceAnalysisOverrideSettingsFile>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Platform)' == 'AnyCPU' ">
     <PlatformTarget>x86</PlatformTarget>
@@ -124,6 +123,7 @@
     </Compile>
     <Compile Include="IconChooser.cs" />
     <Compile Include="IconStatsHandler.cs" />
+    <Compile Include="DashboarderForm.Workers.cs" />
     <Compile Include="DashboarderForm.cs">
       <SubType>Form</SubType>
     </Compile>

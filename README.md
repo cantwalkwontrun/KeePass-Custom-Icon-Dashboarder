@@ -1,5 +1,16 @@
-﻿# KeePass Custom Icon Dashboarder
+---
+lang: en-GB
+---
 
+# KeePass Custom Icon Dashboarder
+
+## Maintenance fork
+
+This development fork fixes worker-thread database changes, stale icon results, worker failure handling and closing during downloads. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
+
+The local DLL identifies itself as 1.3.1.0. No fork binary release has been published. The installation link below points to the original upstream PLGX, which does not contain these changes. Update checks are disabled in the development build until a fork release and matching manifest exist.
+
+## Original project
 
 This plugin provides some management features and statistics for custom icons in KeePass.
 

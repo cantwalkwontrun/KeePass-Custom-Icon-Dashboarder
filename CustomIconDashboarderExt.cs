@@ -37,7 +37,8 @@ namespace CustomIconDashboarderPlugin
 		
 		public override string UpdateUrl
         {
-            get { return "https://raw.githubusercontent.com/incognito1234/KeePass-Custom-Icon-Dashboarder/master/versionInfo.txt"; }
+			// Development fork: enable updates after a fork release is published.
+			get { return null; }
         }
 
 		
@@ -46,6 +47,7 @@ namespace CustomIconDashboarderPlugin
 		
 		public override bool Initialize(IPluginHost host)
 		{
+			if (host == null || host.MainWindow == null) return false;
 			m_host = host;
 			
 			// Get a reference to the 'Tools' menu item container
@@ -71,33 +73,33 @@ namespace CustomIconDashboarderPlugin
 		/// </summary>
 		public override void Terminate()
 		{
+			if (m_host == null) { Dispose(); return; }
 			// Remove all of our menu items
 			ToolStripItemCollection tsMenu = m_host.MainWindow.ToolsMenu.DropDownItems;
-			m_tsmiMenuItem.Click -= this.OnMenuFavicon;
+			if (m_tsmiMenuItem != null) m_tsmiMenuItem.Click -= this.OnMenuFavicon;
 			m_host.MainWindow.ToolsMenu.DropDownOpened -= this.OnToolsMenuOpen;
-			tsMenu.Remove(m_tsmiMenuItem);
-			tsMenu.Remove(m_tsSeparator);
+			if (m_tsmiMenuItem != null) tsMenu.Remove(m_tsmiMenuItem);
+			if (m_tsSeparator != null) tsMenu.Remove(m_tsSeparator);
 			Dispose();
+			m_host = null;
 			
 		}
 		
 		public void Dispose()
 		{
-			m_tsSeparator.Dispose();
-			m_tsmiMenuItem.Dispose();
+			if (m_tsSeparator != null) { m_tsSeparator.Dispose(); m_tsSeparator = null; }
+			if (m_tsmiMenuItem != null) { m_tsmiMenuItem.Dispose(); m_tsmiMenuItem = null; }
 		}
 		
 		private void OnToolsMenuOpen(object sender, EventArgs e)
 		{
-			m_tsmiMenuItem.Enabled = m_host.Database.IsOpen;
+			m_tsmiMenuItem.Enabled = m_host.Database != null && m_host.Database.IsOpen;
 		}
 	
 		
 		private void OnMenuFavicon(object sender, EventArgs e)
 		{
-			DashboarderForm cilf = new DashboarderForm(m_host);
-			
-			cilf.ShowDialog();
+			using (DashboarderForm cilf = new DashboarderForm(m_host)) cilf.ShowDialog();
 		}
 	
 		

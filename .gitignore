@@ -2,3 +2,11 @@ obj/*
 bin/*
 /LomsonLib/bin/Debug
 /LomsonLib/obj/Debug
+
+# Local build references and verification output
+**/bin/
+**/obj/
+/artifacts/
+/KeePass-2.X/
+*.plgx
+*.pdb

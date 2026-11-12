@@ -1,10 +1,11 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
   <PropertyGroup>
     <ProjectGuid>{6089EB1A-29CD-4CFF-8CF8-C9D0E2CEFAB1}</ProjectGuid>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <OutputType>Library</OutputType>
+    <KeePassPath Condition="'$(KeePassPath)' == ''">$(MSBuildProjectDirectory)\KeePass-2.X\KeePass.exe</KeePassPath>
     <RootNamespace>CustomIconDashboarderPlugin</RootNamespace>
     <AssemblyName>CustomIconDashboarderPlugin</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
@@ -21,10 +22,9 @@
     <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
     <WarningLevel>4</WarningLevel>
     <RunCodeAnalysis>False</RunCodeAnalysis>
-    <SourceAnalysisOverrideSettingsFile>C:\Users\Matthieu\AppData\Roaming\ICSharpCode/SharpDevelop4\Settings.SourceAnalysis</SourceAnalysisOverrideSettingsFile>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Platform)' == 'AnyCPU' ">
-    <PlatformTarget>x86</PlatformTarget>
+    <PlatformTarget>AnyCPU</PlatformTarget>
     <BaseAddress>4194304</BaseAddress>
     <RegisterForComInterop>False</RegisterForComInterop>
     <GenerateSerializationAssemblies>Auto</GenerateSerializationAssemblies>
@@ -65,6 +65,14 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BestIconFinder.cs" />
+    <Compile Include="LomsonLib\Collections\CollectionUtil.cs" />
+    <Compile Include="LomsonLib\LomsonDebug\ListViewLayoutManager.cs" />
+    <Compile Include="LomsonLib\LomsonDebug\LomsonDebugLib.cs" />
+    <Compile Include="LomsonLib\UI\CompatibilityManager.cs" />
+    <Compile Include="LomsonLib\UI\RTFBuilder.cs" />
+    <Compile Include="LomsonLib\UI\ScaleControlTableLayoutPanel.cs" />
+    <Compile Include="LomsonLib\UI\SwappableComparer.cs" />
+    <Compile Include="LomsonLib\Utility\LomsonUtility.cs" />
     <Compile Include="HtmlAgilityPack\crc32.cs" />
     <Compile Include="HtmlAgilityPack\EncodingFoundException.cs" />
     <Compile Include="HtmlAgilityPack\HtmlAttribute.cs" />
@@ -114,6 +122,7 @@
     </Compile>
     <Compile Include="IconChooser.cs" />
     <Compile Include="IconStatsHandler.cs" />
+    <Compile Include="DashboarderForm.Workers.cs" />
     <Compile Include="DashboarderForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -154,14 +163,10 @@
     <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\KeePass\KeePass\KeePass.csproj">
-      <Project>{10938016-dee2-4a25-9a5a-8fd3444379ca}</Project>
-      <Name>KeePass</Name>
-    </ProjectReference>
-    <ProjectReference Include="LomsonLib\LomsonLib.csproj">
-      <Project>{f61ffd35-4b4a-4a54-84ef-7ea8b3c59b44}</Project>
-      <Name>LomsonLib</Name>
-    </ProjectReference>
+    <Reference Include="KeePass">
+      <HintPath>$(KeePassPath)</HintPath>
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

@@ -1,4 +1,4 @@
-﻿/*
+/*
  CustomIconDashboarder - KeePass Plugin to get some information and 
   manage custom icons
 
@@ -60,14 +60,13 @@ namespace CustomIconDashboarderPlugin
         private volatile int nbCreatedThread;
         private volatile int nbThreadToBeLaunched;
         private volatile BatchStatusType batchStatus = BatchStatusType.Stopped;
-        private static readonly Object lckThreadStatus = new object(); // Lock
-        private static readonly Object lckBatchStatus = new object();  // Lock
+        private readonly Object lckThreadStatus = new object(); // Lock
+        private readonly Object lckBatchStatus = new object();  // Lock
 
-        private int CONFIG_MAX_CLOSING_WAITING_SEC = 10; // Waiting delay when form is closing and thread is running
 
         private KPCIDConfig m_kpcidConfig;
 
-        private static bool notifyModificationWhenCompletedLastThread;
+        private bool notifyModificationWhenCompletedLastThread;
 
         private IconChooser CurrentIconChooser { get; set; }
 
@@ -83,7 +82,11 @@ namespace CustomIconDashboarderPlugin
 
 
             m_PluginHost = pluginHost;
-            this.Icon = m_PluginHost.MainWindow.Icon;
+            m_database = pluginHost.Database;
+            m_databaseRoot = m_database.RootGroup;
+            m_uiThreadId = Thread.CurrentThread.ManagedThreadId;
+            m_uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            if (m_PluginHost.MainWindow != null) this.Icon = m_PluginHost.MainWindow.Icon;
             this.CurrentIconChooser = null;
             this.m_kpcidConfig = new KPCIDConfig(pluginHost);
 
@@ -116,9 +119,10 @@ namespace CustomIconDashboarderPlugin
 
         }
 
-        private static bool resetDashboardInProgress = false;
-        private static readonly object lckResetDashboardInProgress = new object();
+        private bool resetDashboardInProgress = false;
+        private readonly object lckResetDashboardInProgress = new object();
         private void ResetDashboard() {
+            if (!IsCurrentDatabase()) return;
 
             bool resetInProgress;
             lock (lckResetDashboardInProgress)
@@ -207,31 +211,10 @@ namespace CustomIconDashboarderPlugin
 
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
-            if ( batchStatus != BatchStatusType.Stopped )
-            {
-                lock (lckBatchStatus)
-                {
-                    batchStatus = BatchStatusType.Stopping;
-                    UpdateThreadStatus();
-                    WaitingForm wf = new WaitingForm();
-                    wf.Location = new Point(
-                        this.Location.X + (this.Width - wf.Width) / 2,
-                        this.Location.Y + (this.Height - wf.Height) / 2);
-                    wf.SetMessage("Current operation is stopping. Please wait ... ");
-                    wf.Enabled = false;
-                    wf.Show();
-                    int i = 0;
-                    int maxSec = CONFIG_MAX_CLOSING_WAITING_SEC * 2;
-                    while ((i < maxSec) && (batchStatus != BatchStatusType.Stopped))
-                    {
-                        i += 1;
-                        Application.DoEvents();
-                        Thread.Sleep(500);
-                    }
-                    wf.Close();
-                    wf.Dispose();
-                }
-            }
+            // Close immediately. Pending download results are discarded by RunOnUi;
+            // do not block KeePass or pump a nested message loop while holding locks.
+            m_closing = true;
+            batchStatus = BatchStatusType.Stopping;
         }
 
         private void OnFormClosed(object sender, FormClosedEventArgs e)
@@ -249,7 +232,9 @@ namespace CustomIconDashboarderPlugin
         {
             lock (lckThreadStatus)
             {
-                batchStatus = BatchStatusType.Stopped;
+                m_batchGeneration++;
+                m_failedWorkers = 0;
+                batchStatus = nbToBeLaunched > 0 ? BatchStatusType.InProgress : BatchStatusType.Stopped;
                 nbCreatedThread = 0;
                 nbActiveThread = 0;
                 nbThreadToBeLaunched = nbToBeLaunched;
@@ -309,7 +294,7 @@ namespace CustomIconDashboarderPlugin
                 }
                 else
                 {
-                    if (nbActiveThread > 0)
+                    if (nbActiveThread > 0 || nbCreatedThread < nbThreadToBeLaunched)
                     {
                         status = "In Progress"; batchStatus = BatchStatusType.InProgress;
                     }
@@ -322,6 +307,7 @@ namespace CustomIconDashboarderPlugin
 
                 lbl_status.Text = String.Format("{0} - Nb Thread : {1} Active / {2} Created / {3} Total"
                     , status, nbActiveThread, nbCreatedThread, nbThreadToBeLaunched);
+                if (m_failedWorkers > 0) lbl_status.Text += " - Failed: " + m_failedWorkers;
 
                 if ((batchStatus == BatchStatusType.Stopped) && (notifyModificationWhenCompletedLastThread) 
                     && (nbCreatedThread >= nbThreadToBeLaunched))
@@ -343,16 +329,7 @@ namespace CustomIconDashboarderPlugin
             
         }
 
-        private void UpdateBestIconFinderAndLviFromEntryLviThread(Object lvi)
-        {
-            if (batchStatus != BatchStatusType.Stopping)
-            {
-                var lvsi = (ListViewItem)lvi;
-                UpdateNbThread(1);
-                UpdateBestIconFinderAndLviFromEntryLvi(lvsi);
-                UpdateNbThread(-1);
-            }
-        }
+
 
         private void Btn_stopEntryAction_Click(object sender, EventArgs e)
         {
@@ -584,16 +561,7 @@ namespace CustomIconDashboarderPlugin
         /// </summary>
         /// <param name="iconLvi"></param>
         /// <returns>true if an update has occured. false else</returns>
-        private void UpdateBestIconFinderAndLviFromIconLviThread(Object lvi )
-        {
-            if (batchStatus != BatchStatusType.Stopping)
-            {
-                var iconLvi = (ListViewItem)lvi;
-                UpdateNbThread(1);
-                UpdateBestIconFinderAndLviFromIconLvi(iconLvi);
-                UpdateNbThread(-1);
-            }
-        }
+
 
 
         /// <summary>
@@ -604,7 +572,14 @@ namespace CustomIconDashboarderPlugin
         /// <param name="iconLvi"></param>
         /// <returns>true if an update has occured. false else</returns>
         private bool UpdateBestIconFinderAndLviFromIconLvi(ListViewItem iconLvi) {
-			PwCustomIcon readIcon = m_iconIndexer[iconLvi.ImageIndex];
+            PwCustomIcon readIcon = null;
+            var lstUris = new List<Uri>();
+            if (!RunOnUi(delegate
+            {
+                if (!IsCurrentDatabase()) return;
+                readIcon = m_iconIndexer[iconLvi.ImageIndex];
+                lstUris.AddRange(m_iconCounter.GetListUris(readIcon));
+            }) || readIcon == null) return false;
 
             bool iconChooserIndexerIsLocked;
             lock (lckIconChooserIndexerFromIcon)
@@ -619,8 +594,7 @@ namespace CustomIconDashboarderPlugin
             }
             if ( !iconChooserIndexerIsLocked) {
                 UpdateAllEntriesLvi(iconLvi.SubItems[2], "...");
-                var lstUris = new List<Uri>();
-				lstUris.AddRange( m_iconCounter.GetListUris( readIcon ) );
+
 				
 				// Retrieve images
 				BestIconFinder bif;
@@ -749,19 +723,18 @@ namespace CustomIconDashboarderPlugin
 			UIUtil.DestroyForm(ipf);
 		}
 		
-		void OnPickCustomIconClickThread(object objectLvi)
-		{
-            if (batchStatus != BatchStatusType.Stopping)
-            {
-                var lvi = (ListViewItem)objectLvi;
-                UpdateNbThread(1);
-                UpdateBestIconAndPickIcon(lvi);
-                UpdateNbThread(-1);
-            }
-		}
+
 
         void UpdateBestIconAndPickIcon( ListViewItem lvi)
         {
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                UpdateBestIconFinderAndLviFromIconLvi(lvi);
+                RunOnUi(delegate { UpdateBestIconAndPickIcon(lvi); });
+                return;
+            }
+            if (!IsCurrentDatabase()) return;
+
             UpdateBestIconFinderAndLviFromIconLvi(lvi);
             PwCustomIcon readIcon = m_iconIndexer[lvi.ImageIndex];
 
@@ -820,9 +793,7 @@ namespace CustomIconDashboarderPlugin
             notifyModificationWhenCompletedLastThread = false;
             foreach (ListViewItem lvi in lvsiChecked)
             {
-                ThreadPool.QueueUserWorkItem(
-                    new WaitCallback(this.OnPickCustomIconClickThread),
-                    lvi);
+                QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconAndPickIcon(item); }, lvi);
 
             }
         }
@@ -833,9 +804,7 @@ namespace CustomIconDashboarderPlugin
             ResetThreadManagement(lvsiChecked.Count);
             foreach (ListViewItem lvi in lvsiChecked)
 			{
-                ThreadPool.QueueUserWorkItem(
-                    new WaitCallback(this.UpdateBestIconFinderAndLviFromIconLviThread),
-                    lvi);
+                QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconFinderAndLviFromIconLvi(item); }, lvi);
 
 			}
 			
@@ -849,6 +818,14 @@ namespace CustomIconDashboarderPlugin
 		/// </summary>
 		/// <returns>PwCustomIcon if new icon has been created. null else.</returns>
 		private PwCustomIcon UpdateCustomIconFromImage( PwCustomIcon refIcon, Image img, PwDatabase kdb) {
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                PwCustomIcon applied = null;
+                RunOnUi(delegate { applied = UpdateCustomIconFromImage(refIcon, img, kdb); });
+                return applied;
+            }
+            if (!IsCurrentDatabase() || !ReferenceEquals(kdb, m_database)) return null;
+
 			PwCustomIcon targetIcon = GetCustomIconFromImageAndUpdateKdbIfNecessary( img, kdb);
 			
 			if (targetIcon == null) return null;
@@ -857,10 +834,15 @@ namespace CustomIconDashboarderPlugin
 			IEnumerator<PwEntry> myEntryEnumerator = listEntries.GetEnumerator();
 			while (myEntryEnumerator.MoveNext()) {
 				PwEntry readEntry = myEntryEnumerator.Current;
-				readEntry.CustomIconUuid = targetIcon.Uuid;
-				readEntry.Touch(true);
+                if (!IsLiveEntry(readEntry)) continue;
+                readEntry.CustomIconUuid = targetIcon.Uuid;
+                kdb.Modified = true;
+                kdb.UINeedsIconUpdate = true;
+                readEntry.Touch(true);
 			}
 			
+            // Entry callbacks can open modal dialogs and allow a lock/close in between.
+            if (!IsCurrentDatabase()) return targetIcon;
 			ICollection<PwGroup> listGroups = m_iconCounter.GetListGroupsForPci( refIcon );
 			IEnumerator<PwGroup> myGroupEnumerator = listGroups.GetEnumerator();
 			while (myGroupEnumerator.MoveNext()) {
@@ -1168,9 +1150,7 @@ namespace CustomIconDashboarderPlugin
             ResetThreadManagement(lvsiChecked.Count);
 			foreach(ListViewItem lvi in lvsiChecked)
 			{
-				ThreadPool.QueueUserWorkItem(
-					new WaitCallback(this.UpdateBestIconFinderAndLviFromEntryLviThread),
-					lvi);
+				QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconFinderAndLviFromEntryLvi(item); }, lvi);
 			}
 			
 			OnLvAllEntriesSelectedIndexChanged(null,null);
@@ -1179,6 +1159,14 @@ namespace CustomIconDashboarderPlugin
         
         void UpdateBestIconAndPickIconForEntries(ListViewItem lvi)
 		{
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                UpdateBestIconFinderAndLviFromEntryLvi(lvi);
+                RunOnUi(delegate { UpdateBestIconAndPickIconForEntries(lvi); });
+                return;
+            }
+            if (!IsCurrentDatabase()) return;
+
         	UpdateBestIconFinderAndLviFromEntryLvi( lvi );
 			var readEntry = (PwEntry)lvi.Tag;
 				
@@ -1194,16 +1182,7 @@ namespace CustomIconDashboarderPlugin
 			
 		}
 
-        void OnPickCustomIconClickForEntriesThread(object objectLvi)
-        {
-            if (batchStatus != BatchStatusType.Stopping)
-            {
-                var lvi = (ListViewItem)objectLvi;
-                UpdateNbThread(1);
-                UpdateBestIconAndPickIconForEntries(lvi);
-                UpdateNbThread(-1);
-            }
-        }
+
 
         void OnPickCustomIconClickForEntries()
         {
@@ -1212,9 +1191,7 @@ namespace CustomIconDashboarderPlugin
             notifyModificationWhenCompletedLastThread = false;
             foreach (ListViewItem lvi in lvsiChecked)
             {
-                ThreadPool.QueueUserWorkItem(
-                    new WaitCallback(this.OnPickCustomIconClickForEntriesThread),
-                    lvi);
+                QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconAndPickIconForEntries(item); }, lvi);
 
             }
         }
@@ -1293,15 +1270,10 @@ namespace CustomIconDashboarderPlugin
         
         private delegate void UpdateAllEntriesLviCallBack(ListViewItem.ListViewSubItem lvsi, string newValue);
         
-        private void UpdateAllEntriesLvi(ListViewItem.ListViewSubItem lvsi, string newValue) {
-			if (this.m_lvAllEntries.InvokeRequired) {
-				var dd = new UpdateAllEntriesLviCallBack(UpdateAllEntriesLvi);
-				this.Invoke(dd, new object[] { lvsi, newValue });
-			}
-			else {
-        		lvsi.Text = newValue;
-			}
-		}
+        private void UpdateAllEntriesLvi(ListViewItem.ListViewSubItem lvsi, string newValue)
+        {
+            RunOnUi(delegate { lvsi.Text = newValue; });
+        }
         
 		/// <summary>
 		/// Update bestIconFinder and size in List View Item
@@ -1311,17 +1283,26 @@ namespace CustomIconDashboarderPlugin
 		/// <param name="iconLvi">ListViewItem representing entry</param>
 		/// <returns>true if an update has occured. false else</returns>
 		private bool UpdateBestIconFinderAndLviFromEntryLvi(ListViewItem iconLvi) {
-			var pe = (PwEntry)iconLvi.Tag;
-			Debug.Assert( pe != null);
+            PwEntry pe = null;
+            string readUrl = null;
+            if (!RunOnUi(delegate
+            {
+                var candidate = (PwEntry)iconLvi.Tag;
+                if (IsLiveEntry(candidate))
+                {
+                    pe = candidate;
+                    readUrl = candidate.Strings.ReadSafe(PwDefs.UrlField);
+                }
+            }) || pe == null) return false;
 			
 			bool iconChooserIndexerIsLocked;
 			lock (lckIconChooserIndexerFromEntry) {
-				iconChooserIndexerIsLocked = m_iconChooserIndexerFromEntry.ContainsKey( pe );
+                iconChooserIndexerIsLocked = m_iconChooserIndexerFromEntry.ContainsKey(pe);
+                if (!iconChooserIndexerIsLocked) m_iconChooserIndexerFromEntry.Add(pe, null);
 			}
 			if ( !iconChooserIndexerIsLocked ) {
 				UpdateAllEntriesLvi( iconLvi.SubItems[2], "...");
 			
-				String readUrl = pe.Strings.ReadSafe(PwDefs.UrlField);
 				BestIconFinder bif;
 				if (!string.IsNullOrEmpty(readUrl)) {
 					String urlFieldValue = LomsonLib.Utility.URLUtility.addUrlHttpPrefix(readUrl);
@@ -1343,7 +1324,7 @@ namespace CustomIconDashboarderPlugin
 				   
 				var ich = new IconChooser(bif);
                 lock (lckIconChooserIndexerFromEntry) {
-                    m_iconChooserIndexerFromEntry.Add(pe, ich);
+                    m_iconChooserIndexerFromEntry[pe] = ich;
 				}
 			    UpdateEntryLviFromBestIconFinder(iconLvi);
 			    return true;
@@ -1397,15 +1378,22 @@ namespace CustomIconDashboarderPlugin
 		/// </summary>
 		/// <returns>PwCustomIcon if new icon has been created. null else.</returns>
 		private PwCustomIcon UpdateEntryFromImage( PwEntry pe, Image img, PwDatabase kdb) {
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                PwCustomIcon applied = null;
+                RunOnUi(delegate { applied = UpdateEntryFromImage(pe, img, kdb); });
+                return applied;
+            }
+            if (!IsCurrentDatabase() || !ReferenceEquals(kdb, m_database) || !IsLiveEntry(pe)) return null;
+
 			PwCustomIcon targetIcon = GetCustomIconFromImageAndUpdateKdbIfNecessary( img, kdb);
 			
 			if (targetIcon == null) return null;
 			if (targetIcon.Uuid == pe.CustomIconUuid) return targetIcon;
-			pe.CustomIconUuid = targetIcon.Uuid;
-			pe.Touch(true);
-			
-			kdb.UINeedsIconUpdate = true;
-			kdb.Modified = true;
+            pe.CustomIconUuid = targetIcon.Uuid;
+            kdb.Modified = true;
+            kdb.UINeedsIconUpdate = true;
+            pe.Touch(true);
 			
 			return targetIcon;
 		}
@@ -1414,6 +1402,7 @@ namespace CustomIconDashboarderPlugin
 		
 		#region Common methods
 		private void NotifyDatabaseModificationAndUpdateMainForm() {
+            if (!IsCurrentDatabase()) return;
 			m_PluginHost.Database.Modified = true;
             m_PluginHost.Database.UINeedsIconUpdate = true;
             m_PluginHost.MainWindow.UpdateUI(true, null, false, null, true, null, true);
