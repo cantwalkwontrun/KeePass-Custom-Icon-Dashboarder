@@ -8,7 +8,7 @@ lang: en-GB
 
 This maintenance fork adds a readable, resizable dashboard with measured columns, theme-aware headers and compact previews. It also fixes multi-entry icon assignment, download cancellation, resource ownership and unsafe or excessive favicon responses. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
 
-Version **1.4.1** is distributed as `CustomIconDashboarderPlugin.dll` from this fork's [releases](https://github.com/noswimmingplease/KeePass-Custom-Icon-Dashboarder/releases). KeePass update notifications remain intentionally disabled; check the fork releases manually. No PLGX is supplied.
+Version **1.4.1** is distributed as `CustomIconDashboarderPlugin.dll` from this fork's [releases](https://github.com/cantwalkwontrun/KeePass-Custom-Icon-Dashboarder/releases). KeePass update notifications remain intentionally disabled; check the fork releases manually. No PLGX is supplied.
 
 ## Original project
 
@@ -40,7 +40,7 @@ Features are:
 
 
 ### Installation steps
-1. Download `CustomIconDashboarderPlugin.dll` and `SHA256SUMS.txt` from the [fork release](https://github.com/noswimmingplease/KeePass-Custom-Icon-Dashboarder/releases/latest). Verify the DLL with `Get-FileHash -Algorithm SHA256` against the checksum file.
+1. Download `CustomIconDashboarderPlugin.dll` and `SHA256SUMS.txt` from the [fork release](https://github.com/cantwalkwontrun/KeePass-Custom-Icon-Dashboarder/releases/latest). Verify the DLL with `Get-FileHash -Algorithm SHA256` against the checksum file.
 2. Close KeePass and keep a local copy of the currently working plugin for rollback.
 3. Replace the DLL in KeePass's `Plugins` directory. Remove an older `CustomIconDashboarder.plgx` from that directory so only one Dashboarder version loads.
 4. Start KeePass and test with a disposable database first. See [REVIEW.md](./REVIEW.md) for the tested scope.
