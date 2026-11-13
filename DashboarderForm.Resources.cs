@@ -15,11 +15,13 @@ namespace CustomIconDashboarderPlugin
 
         private Func<Uri, BestIconFinder> m_createIconFinder = uri => new BestIconFinder(uri);
 
-        private void FindBestIconForDashboard(BestIconFinder finder)
+        private bool IsActiveBatch(int generation) { return !m_closing && !m_batchCancelled && generation == m_batchGeneration && batchStatus != BatchStatusType.Stopping; }
+
+        private void FindBestIconForDashboard(BestIconFinder finder, int generation)
         {
             lock (m_downloadLock)
             {
-                if (m_closing || m_batchCancelled || batchStatus == BatchStatusType.Stopping) { finder.Dispose(); return; }
+                if (!IsActiveBatch(generation)) { finder.Dispose(); return; }
                 m_activeDownloads.Add(finder);
             }
             try { finder.FindBestIcon(); }

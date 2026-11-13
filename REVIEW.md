@@ -24,10 +24,14 @@ The upstream baseline is `6bd1c2bd7d296a244b907364043719df8f24d08e` (v1.3.0). Th
 
 The companion HIBP review additionally fixed entry events lost during bulk scans, unnecessary dirty-state changes after saving, inconsistent menu checkmarks and silent repeated manual failures. Its response buffer is bounded and failures preserve existing breach information. See its own review for the complete findings.
 
+## Further release reviews
+
+Two further rounds used the same three independent source-review roles. The first found that action/checkbox events could re-enable Start during an active batch, and that narrow panes could clip Stop. It also found worker-side cache/image reads after UI publication. The fixes centralise all start guards, require the original generation for registration/publication/application, run complete row updates on the UI context, and adapt the action controls to the pane width. The second round rechecked those fixes. The implementing developer ran the tests; source reviewers did not independently execute them.
+
 ## Verification
 
-- Production DLL: AnyCPU, .NET Framework 4.8, assembly version **1.4.0.0**, built against the official signed KeePass 2.62 assembly. Both project templates include the new helpers and HTTP reference.
-- **50 Dashboarder regression checks passed**, using synthetic in-memory databases and fake HTTP handlers. They cover layout/header minima, manual column widths, geometry calculations at scale factors 1/1.5/2, multi-entry assignment, repeated preview replacement, stale selections, worker limits, database lifetime, URL validation, byte/decode bounds, deadlines and Stop/close races.
+- Production DLL: AnyCPU, .NET Framework 4.8, assembly version **1.4.1.0**, built against the official signed KeePass 2.62 assembly. Both project templates include the new helpers and HTTP reference.
+- **54 Dashboarder regression checks passed**, using synthetic in-memory databases and fake HTTP handlers. They cover layout/header minima, manual column widths, geometry calculations and action-control bounds at scale factors 1/1.5/2, multi-entry assignment, repeated preview replacement, stale selections, worker limits, database lifetime, URL validation, byte/decode bounds, deadlines, busy UI changes and Stop/close races.
 - The production build retains three existing warnings in bundled HtmlAgilityPack (two obsolete Crc32 uses and one unused exception variable). The test project builds without warnings.
 - The companion HIBP suite passed **69 offline checks plus one live documented synthetic HIBP query (70 total)**, including calls into the actual rebuilt Dashboarder entry/shared-icon mutation methods and the exact released Fluent Theme v1.5.2026.1111 DLL.
 - Synthetic light/dark tag repaint checks exercise the theme's actual details panel. A separate off-screen dashboard preview uses its released palette/dialog styler. These checks support those paths; native title bars, plugin load order and every interactive theme behaviour are not covered.
@@ -41,4 +45,4 @@ Downloading favicons necessarily contacts the websites derived from entry URLs a
 
 The safer format subset accepts PNG, GIF, BMP, JPEG and recognised PNG/DIB ICO payloads. SVG, WebP, unusual ICO payloads and HTTPS sites redirecting to HTTP may now return no result. Only TLS 1.2 is enabled on the downloader; this is deliberately more restrictive than arbitrary platform negotiation. Per-item bounds and close-time cleanup reduce memory growth, but retained choices still scale with the number of rows searched during the session; there is no fixed whole-session RAM cap.
 
-No fork binary release or rebuilt PLGX is published. Update checks remain disabled until a fork release and matching manifest exist. The inherited PLGX creation script remains unvalidated. Optional future work includes a bounded gallery eviction policy and more cross-platform/real-application visual testing; these are recommendations, not claims of completed work.
+The v1.4.1 fork release supplies the DLL and its SHA-256 checksum. Update notifications remain intentionally disabled; updates are manual through this fork's release page. No rebuilt PLGX is supplied and the inherited creation script remains unvalidated. Optional future work includes a bounded gallery eviction policy and more cross-platform/real-application visual testing; these are recommendations, not claims of completed work.

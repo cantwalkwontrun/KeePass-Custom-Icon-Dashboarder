@@ -6,9 +6,9 @@ lang: en-GB
 
 ## Maintenance fork
 
-This development fork adds a readable, resizable dashboard with measured columns, theme-aware headers and compact previews. It also fixes multi-entry icon assignment, download cancellation, resource ownership and unsafe or excessive favicon responses. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
+This maintenance fork adds a readable, resizable dashboard with measured columns, theme-aware headers and compact previews. It also fixes multi-entry icon assignment, download cancellation, resource ownership and unsafe or excessive favicon responses. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
 
-The local DLL identifies itself as 1.4.0.0. No fork binary release has been published. The installation link below points to the original upstream PLGX, which does not contain these changes. Update checks are disabled in the development build until a fork release and matching manifest exist.
+Version **1.4.1** is distributed as `CustomIconDashboarderPlugin.dll` from this fork's [releases](https://github.com/noswimmingplease/KeePass-Custom-Icon-Dashboarder/releases). KeePass update notifications remain intentionally disabled; check the fork releases manually. No PLGX is supplied.
 
 ## Original project
 
@@ -35,13 +35,15 @@ Features are:
 
 ### Pre-requisites
 
-- KeePass Password Safe 2.00+
-- Framework .NET 4.5+
+- Windows with KeePass Password Safe 2; verification used KeePass 2.62
+- .NET Framework 4.8 or later
 
 
 ### Installation steps
-1. Download [latest](https://github.com/incognito1234/Keepass-Custom-Icon-Dashboarder/releases/latest) plgx release
-2. Put the _.plgx_ file into a folder called **plugins** inside your KeePass Password Safe installation folder
+1. Download `CustomIconDashboarderPlugin.dll` and `SHA256SUMS.txt` from the [fork release](https://github.com/noswimmingplease/KeePass-Custom-Icon-Dashboarder/releases/latest). Verify the DLL with `Get-FileHash -Algorithm SHA256` against the checksum file.
+2. Close KeePass and keep a local copy of the currently working plugin for rollback.
+3. Replace the DLL in KeePass's `Plugins` directory. Remove an older `CustomIconDashboarder.plgx` from that directory so only one Dashboarder version loads.
+4. Start KeePass and test with a disposable database first. See [REVIEW.md](./REVIEW.md) for the tested scope.
 
 
 ## Screenshots
@@ -55,6 +57,12 @@ Custom icon Dashboard (downloading in progress)
 
 
 ## Changelog
+
+### Version 1.4.1 (maintenance fork)
+- Readable columns, monitor-bounded window sizing, theme-aware headers and responsive action controls.
+- Correct multi-entry assignment and image ownership; clear stale previews and release owned resources.
+- UI-thread database changes, bounded workers/downloads/decoding, reliable Stop/close and generation-bound result acceptance.
+- Prevent overlapping batches when actions or checked rows change during a download.
 
 ### Version 1.3.0
 - Manage malformed URL

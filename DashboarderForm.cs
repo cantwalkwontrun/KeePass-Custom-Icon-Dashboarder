@@ -418,55 +418,27 @@ namespace CustomIconDashboarderPlugin
             m_lvDownloadResultColumnSorter.ApplyToListView(m_lvDownloadResult);
         }
 
+        private bool CanStartAction()
+        {
+            return IsCurrentDatabase() && batchStatus == BatchStatusType.Stopped &&
+                nbActiveThread == 0 && m_scheduledWorkers == 0 && m_pendingWorkers.Count == 0;
+        }
+
+        private bool TryBeginBatch(ListView list)
+        {
+            if (!CanStartAction() || list.CheckedItems.Count == 0) return false;
+            ResetThreadManagement(list.CheckedItems.Count);
+            UpdateStartAndStopButtons();
+            return true;
+        }
+
         private void UpdateStartAndStopButtons()
         {
-            lock (lckBatchStatus)
-            {
-                // Update buttons of "entry" tab
-                if (cbo_entryActionSelector.SelectedIndex == 0)
-                {
-                    btn_performEntryAction.Enabled = false;
-                    btn_stopEntryAction.Enabled = false;
-                }
-                else if (batchStatus == BatchStatusType.InProgress)
-                {
-                    btn_performEntryAction.Enabled = false;
-                    btn_stopEntryAction.Enabled = true;
-                }
-                else if (batchStatus == BatchStatusType.Stopped)
-                {
-                    btn_performEntryAction.Enabled = true;
-                    btn_stopEntryAction.Enabled = false;
-                }
-                else // else batchStatus == BatchStatusType.Stopping
-                {
-                    btn_performEntryAction.Enabled = false;
-                    btn_stopEntryAction.Enabled = false;
-                }
-
-                // Update buttons of "icon" tab
-                if (cbo_iconActionSelector.SelectedIndex == 0)
-                {
-                    btn_performIconAction.Enabled = false;
-                    btn_stopIconAction.Enabled = false;
-                }
-                else if (batchStatus == BatchStatusType.InProgress)
-                {
-                    btn_performIconAction.Enabled = false;
-                    btn_stopIconAction.Enabled = true;
-                }
-                else if (batchStatus == BatchStatusType.Stopped)
-                {
-                    btn_performIconAction.Enabled = true;
-                    btn_stopIconAction.Enabled = false;
-                }
-                else // else batchStatus == BatchStatusType.Stopping
-                {
-                    btn_performIconAction.Enabled = false;
-                    btn_stopIconAction.Enabled = false;
-                }
-            }
-            
+            bool idle = CanStartAction();
+            btn_performEntryAction.Enabled = idle && cbo_entryActionSelector.SelectedIndex > 0 && m_lvAllEntries.CheckedItems.Count > 0;
+            btn_performIconAction.Enabled = idle && cbo_iconActionSelector.SelectedIndex > 0 && m_lvViewIcon.CheckedItems.Count > 0;
+            bool stoppable = IsCurrentDatabase() && batchStatus == BatchStatusType.InProgress && !m_batchCancelled;
+            btn_stopEntryAction.Enabled = btn_stopIconAction.Enabled = stoppable;
         }
 
         #endregion
@@ -503,15 +475,7 @@ namespace CustomIconDashboarderPlugin
             };
             m_lvIconsColumnSorter.AssignStatisticMessageUpdater(ehStats, true, false, "%3 of %1 checked");
 
-            ListViewLayoutManager.dlgMultiCheckingCheckBoxes ehMulti = delegate(IList<ListViewItem> lst) {
-                //Disable button if no elements is checked
-                if (m_lvViewIcon.CheckedItems.Count == 0 ) {
-                    btn_performIconAction.Enabled = false;
-                }
-                else {
-                    btn_performIconAction.Enabled = cbo_iconActionSelector.SelectedIndex != 0;
-                }
-            };
+            ListViewLayoutManager.dlgMultiCheckingCheckBoxes ehMulti = delegate(IList<ListViewItem> lst) { UpdateStartAndStopButtons(); };
             m_lvIconsColumnSorter.DefineMultiCheckingBehavior(ehMulti);
             m_lvIconsColumnSorter.EnableMultiCheckingControl();
 
@@ -587,6 +551,7 @@ namespace CustomIconDashboarderPlugin
         /// <param name="iconLvi"></param>
         /// <returns>true if an update has occured. false else</returns>
         private bool UpdateBestIconFinderAndLviFromIconLvi(ListViewItem iconLvi) {
+            int generation = m_batchGeneration;
             PwCustomIcon readIcon = null;
             var lstUris = new List<Uri>();
             if (!RunOnUi(delegate
@@ -616,7 +581,7 @@ namespace CustomIconDashboarderPlugin
 				if (lstUris.Count > 0) {
 					Uri uri1 = lstUris[0];
 					bif = m_createIconFinder(uri1);
-					FindBestIconForDashboard(bif);
+					FindBestIconForDashboard(bif, generation);
 				}
 				else {
 					bif = BestIconFinder.BuildInstanceWithNoURLResult();
@@ -626,8 +591,8 @@ namespace CustomIconDashboarderPlugin
                 bool accepted = false;
                 RunOnUi(delegate
                 {
-                    if (!m_batchCancelled && batchStatus != BatchStatusType.Stopping && IsCurrentDatabase()) { m_iconChooserIndexerFromIcon[readIcon.Uuid] = ich; accepted = true; }
-                    else
+                    if (IsActiveBatch(generation) && IsCurrentDatabase()) { m_iconChooserIndexerFromIcon[readIcon.Uuid] = ich; accepted = true; UpdateIconLviFromBestIconFinder(iconLvi); }
+                    else if (generation == m_batchGeneration)
                     {
                         IconChooser pending;
                         if (m_iconChooserIndexerFromIcon.TryGetValue(readIcon.Uuid, out pending) && pending == null) m_iconChooserIndexerFromIcon.Remove(readIcon.Uuid);
@@ -635,13 +600,19 @@ namespace CustomIconDashboarderPlugin
                     }
                 });
                 if (!accepted) { ich.Bif.Dispose(); return false; }
-			    UpdateIconLviFromBestIconFinder(iconLvi);
 				return true;
 			}
 			return false;
 		}
 		
 		private void UpdateIconLviFromBestIconFinder(ListViewItem lvi) {
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                RunOnUi(delegate { UpdateIconLviFromBestIconFinder(lvi); });
+                return;
+            }
+            if (!IsCurrentDatabase()) return;
+
 			IconChooser ich = null;
 			PwCustomIcon readIcon = m_iconIndexer[lvi.ImageIndex];
             bool iconChooserIndexerIsFound;
@@ -754,10 +725,11 @@ namespace CustomIconDashboarderPlugin
 
         void UpdateBestIconAndPickIcon( ListViewItem lvi)
         {
+            int generation = m_batchGeneration;
             if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
             {
                 UpdateBestIconFinderAndLviFromIconLvi(lvi);
-                RunOnUi(delegate { UpdateBestIconAndPickIcon(lvi); });
+                RunOnUi(delegate { if (IsActiveBatch(generation)) UpdateBestIconAndPickIcon(lvi); });
                 return;
             }
             if (m_batchCancelled || batchStatus == BatchStatusType.Stopping || !IsCurrentDatabase()) return;
@@ -813,7 +785,7 @@ namespace CustomIconDashboarderPlugin
         void OnPickCustomIconClick()
         {
             ListView.CheckedListViewItemCollection lvsiChecked = m_lvViewIcon.CheckedItems;
-            ResetThreadManagement(lvsiChecked.Count);
+            if (!TryBeginBatch(m_lvViewIcon)) return;
             notifyModificationWhenCompletedLastThread = false;
             foreach (ListViewItem lvi in lvsiChecked)
             {
@@ -825,7 +797,7 @@ namespace CustomIconDashboarderPlugin
         void OnDownloadCustomIconClick()
 		{
 			ListView.CheckedListViewItemCollection lvsiChecked = m_lvViewIcon.CheckedItems;
-            ResetThreadManagement(lvsiChecked.Count);
+            if (!TryBeginBatch(m_lvViewIcon)) return;
             foreach (ListViewItem lvi in lvsiChecked)
 			{
                 QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconFinderAndLviFromIconLvi(item); }, lvi);
@@ -942,6 +914,7 @@ namespace CustomIconDashboarderPlugin
 		
 		void OnPerformIconActionClick(object sender, EventArgs e)
 		{
+            if (!CanStartAction() || m_lvViewIcon.CheckedItems.Count == 0) return;
 			switch (cbo_iconActionSelector.SelectedIndex) {
 				case 1:
 					OnModifyCustomIconClick();
@@ -964,7 +937,7 @@ namespace CustomIconDashboarderPlugin
 		
 		void OnIconActionSelectorSelectedIndexChanged(object sender, EventArgs e)
 		{
-			btn_performIconAction.Enabled = cbo_iconActionSelector.SelectedIndex != 0;
+			UpdateStartAndStopButtons();
 		}
 		
 		
@@ -1090,15 +1063,7 @@ namespace CustomIconDashboarderPlugin
 			m_lvAllEntriesColumnSorter.AutoWidthColumn = false;
 			m_lvAllEntriesColumnSorter.CheckAllCheckBox = cb_allEntriesSelection;
 			
-			ListViewLayoutManager.dlgMultiCheckingCheckBoxes ehMulti = delegate(IList<ListViewItem> lst) {
-				//Disable button if no elements is checked
-				if (m_lvAllEntries.CheckedItems.Count == 0 ) {
-					btn_performEntryAction.Enabled = false;					
-				}
-				else {
-					btn_performEntryAction.Enabled = cbo_entryActionSelector.SelectedIndex != 0;
-				}
-			};
+            ListViewLayoutManager.dlgMultiCheckingCheckBoxes ehMulti = delegate(IList<ListViewItem> lst) { UpdateStartAndStopButtons(); };
 			m_lvAllEntriesColumnSorter.DefineMultiCheckingBehavior(ehMulti);
 			m_lvAllEntriesColumnSorter.EnableMultiCheckingControl();
 			
@@ -1175,7 +1140,7 @@ namespace CustomIconDashboarderPlugin
         void OnDownloadCustomIconClickForEntries()
 		{
 			ListView.CheckedListViewItemCollection lvsiChecked = m_lvAllEntries.CheckedItems;
-            ResetThreadManagement(lvsiChecked.Count);
+            if (!TryBeginBatch(m_lvAllEntries)) return;
 			foreach(ListViewItem lvi in lvsiChecked)
 			{
 				QueueBatchWork(delegate(ListViewItem item) { UpdateBestIconFinderAndLviFromEntryLvi(item); }, lvi);
@@ -1187,10 +1152,11 @@ namespace CustomIconDashboarderPlugin
         
         void UpdateBestIconAndPickIconForEntries(ListViewItem lvi)
 		{
+            int generation = m_batchGeneration;
             if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
             {
                 UpdateBestIconFinderAndLviFromEntryLvi(lvi);
-                RunOnUi(delegate { UpdateBestIconAndPickIconForEntries(lvi); });
+                RunOnUi(delegate { if (IsActiveBatch(generation)) UpdateBestIconAndPickIconForEntries(lvi); });
                 return;
             }
             if (m_batchCancelled || batchStatus == BatchStatusType.Stopping || !IsCurrentDatabase()) return;
@@ -1215,7 +1181,7 @@ namespace CustomIconDashboarderPlugin
         void OnPickCustomIconClickForEntries()
         {
             ListView.CheckedListViewItemCollection lvsiChecked = m_lvAllEntries.CheckedItems;
-            ResetThreadManagement(lvsiChecked.Count);
+            if (!TryBeginBatch(m_lvAllEntries)) return;
             notifyModificationWhenCompletedLastThread = false;
             foreach (ListViewItem lvi in lvsiChecked)
             {
@@ -1269,6 +1235,7 @@ namespace CustomIconDashboarderPlugin
 		
         void OnPerformEntryActionClick(object sender, EventArgs e)
 		{
+            if (!CanStartAction() || m_lvAllEntries.CheckedItems.Count == 0) return;
 			switch (cbo_entryActionSelector.SelectedIndex) {
 				case 1:
 					OnModifyIconClickForEntries();
@@ -1301,6 +1268,7 @@ namespace CustomIconDashboarderPlugin
 		/// <param name="iconLvi">ListViewItem representing entry</param>
 		/// <returns>true if an update has occured. false else</returns>
 		private bool UpdateBestIconFinderAndLviFromEntryLvi(ListViewItem iconLvi) {
+            int generation = m_batchGeneration;
             PwEntry pe = null;
             string readUrl = null;
             if (!RunOnUi(delegate
@@ -1329,7 +1297,7 @@ namespace CustomIconDashboarderPlugin
                     {   // Detect non-managed URL Format
                         var siteUri = new Uri(urlFieldValue);
                         bif = m_createIconFinder(siteUri);
-                        FindBestIconForDashboard(bif);
+                        FindBestIconForDashboard(bif, generation);
                     }
                     catch (Exception)
                     {
@@ -1344,8 +1312,8 @@ namespace CustomIconDashboarderPlugin
                 bool accepted = false;
                 RunOnUi(delegate
                 {
-                    if (!m_batchCancelled && batchStatus != BatchStatusType.Stopping && IsLiveEntry(pe) && pe.Strings.ReadSafe(PwDefs.UrlField) == readUrl) { m_iconChooserIndexerFromEntry[pe] = ich; accepted = true; }
-                    else
+                    if (IsActiveBatch(generation) && IsLiveEntry(pe) && pe.Strings.ReadSafe(PwDefs.UrlField) == readUrl) { m_iconChooserIndexerFromEntry[pe] = ich; accepted = true; UpdateEntryLviFromBestIconFinder(iconLvi); }
+                    else if (generation == m_batchGeneration)
                     {
                         IconChooser pending;
                         if (m_iconChooserIndexerFromEntry.TryGetValue(pe, out pending) && pending == null) m_iconChooserIndexerFromEntry.Remove(pe);
@@ -1353,7 +1321,6 @@ namespace CustomIconDashboarderPlugin
                     }
                 });
                 if (!accepted) { ich.Bif.Dispose(); return false; }
-			    UpdateEntryLviFromBestIconFinder(iconLvi);
 			    return true;
 			}
 			return false;
@@ -1361,6 +1328,13 @@ namespace CustomIconDashboarderPlugin
 
 		// This method is threadsafe
         private void UpdateEntryLviFromBestIconFinder( ListViewItem lvi) {
+            if (Thread.CurrentThread.ManagedThreadId != m_uiThreadId)
+            {
+                RunOnUi(delegate { UpdateEntryLviFromBestIconFinder(lvi); });
+                return;
+            }
+            if (!IsCurrentDatabase()) return;
+
 			IconChooser ich = null;
         	var pe = (PwEntry)lvi.Tag;
         	lock (lckIconChooserIndexerFromEntry) {

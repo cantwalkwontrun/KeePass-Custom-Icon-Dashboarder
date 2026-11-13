@@ -122,6 +122,8 @@ namespace CustomIconDashboarderPlugin
             selector.DropDownWidth = D(280);
             selector.Margin = new Padding(0, D(4), D(8), 0);
             foreach (Button button in new[] { start, stop }) { button.Size = new Size(D(72), D(30)); button.Margin = new Padding(0, D(3), D(6), 0); }
+            actions.SizeChanged += delegate { FitActionControls(actions, selector, start, stop); };
+            FitActionControls(actions, selector, start, stop);
             var selection = new TableLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1 };
             selection.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             selection.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, D(112)));
@@ -133,6 +135,15 @@ namespace CustomIconDashboarderPlugin
             fit.Click += delegate { FitAllColumns(); };
             selection.Controls.Add(fit, 1, 0);
             panel.Controls.Add(selection, 0, 1);
+        }
+
+        private void FitActionControls(FlowLayoutPanel actions, ComboBox selector, Button start, Button stop)
+        {
+            int available = Math.Max(1, actions.ClientSize.Width - actions.Padding.Horizontal);
+            int margins = selector.Margin.Horizontal + start.Margin.Horizontal + stop.Margin.Horizontal;
+            int buttonWidth = Math.Min(D(72), Math.Max(D(40), (available - margins - D(24)) / 2));
+            start.Width = stop.Width = buttonWidth;
+            selector.Width = Math.Max(1, Math.Min(D(244), available - margins - buttonWidth * 2));
         }
 
         private void ConfigureUsage(TableLayoutPanel panel, Label label, ListView list)

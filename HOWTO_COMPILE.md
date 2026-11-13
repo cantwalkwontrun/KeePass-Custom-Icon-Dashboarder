@@ -20,4 +20,4 @@ The normal regression harness constructs unshown forms and synthetic in-memory d
 
 For a manual test, use a disposable database and keep only one version of Dashboarder in the test instance's `Plugins` directory. Do not load the original PLGX and the development DLL together.
 
-Both project templates target .NET Framework 4.8 and include the layout, resource, worker and safe-download helpers. The inherited `createPlgx.cmd` has not been used or validated for this fork; it contains machine-specific copy/cleanup commands. No rebuilt PLGX or binary release has been published.
+Both project templates target .NET Framework 4.8 and include the layout, resource, worker and safe-download helpers. The inherited `createPlgx.cmd` has not been used or validated for this fork; it contains machine-specific copy/cleanup commands. The release supplies a DLL; no rebuilt PLGX is supplied.

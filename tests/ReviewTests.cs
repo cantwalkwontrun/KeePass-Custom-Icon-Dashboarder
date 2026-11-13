@@ -47,6 +47,14 @@ internal static partial class Program
                 Assert(area.Contains(form.Bounds));
                 var split = (SplitContainer)Get(form, "spc_mainSplitter");
                 Assert(split.SplitterDistance >= split.Panel1MinSize && split.Panel2.Width >= split.Panel2MinSize);
+                split.SplitterDistance = split.Panel1MinSize;
+                form.PerformLayout();
+                foreach (string prefix in new[] { "icon", "entry" })
+                {
+                    var actions = (FlowLayoutPanel)Get(form, prefix == "icon" ? "flp_iconActions" : "flp_entryAction");
+                    foreach (Control control in actions.Controls)
+                        Assert(control.Left >= 0 && control.Right <= actions.ClientSize.Width && control.Bottom <= actions.ClientSize.Height);
+                }
             }));
         }
         Run("multi-entry custom and standard assignments affect every chosen row", () => Fixture((form, host, db, context) =>
@@ -159,6 +167,46 @@ internal static partial class Program
                 Assert(SpinWait.SpinUntil(() => stream.Disposed, 1000));
             }
         });
+        Run("action and checkbox changes cannot start an overlapping batch", () => Fixture((form, host, db, context) =>
+        {
+            SeedDashboard(form, db);
+            var entries = (ListView)Get(form, "m_lvAllEntries"); var icons = (ListView)Get(form, "m_lvViewIcon");
+            entries.Items[0].Checked = true;
+            ((ComboBox)Get(form, "cbo_entryActionSelector")).SelectedIndex = 2;
+            var stream = new SlowStream(); int requests = 0;
+            Set(form, "m_createIconFinder", (Func<Uri, BestIconFinder>)(uri => InjectFinder(downloader, r =>
+            { Interlocked.Increment(ref requests); return new HttpResponseMessage(HttpStatusCode.OK) { Content = new SlowContent(stream, false) }; })));
+            Call(form, "OnDownloadCustomIconClickForEntries"); context.Until(() => stream.Entered);
+            int generation = (int)Get(form, "m_batchGeneration");
+            ((ComboBox)Get(form, "cbo_iconActionSelector")).SelectedIndex = 4;
+            icons.Items[0].Checked = true; entries.Items[1].Checked = true;
+            Assert(!((Button)Get(form, "btn_performIconAction")).Enabled && !((Button)Get(form, "btn_performEntryAction")).Enabled);
+            Call(form, "OnPickCustomIconClick"); Call(form, "OnDownloadCustomIconClick");
+            Call(form, "OnPickCustomIconClickForEntries"); Call(form, "OnDownloadCustomIconClickForEntries");
+            Assert((int)Get(form, "m_batchGeneration") == generation && requests == 1);
+            Call(form, "InitiateThreadStopping"); context.Until(() => (int)Get(form, "m_scheduledWorkers") == 0);
+            Assert(((Button)Get(form, "btn_performEntryAction")).Enabled);
+        }));
+        foreach (string method in new[] { "UpdateIconLviFromBestIconFinder", "UpdateEntryLviFromBestIconFinder" })
+        {
+            string captured = method;
+            Run("close rejects queued row reads before cache/image access: " + method, () => Fixture((form, host, db, context) =>
+            {
+                Task work = Task.Run(() => Call(form, captured, new ListViewItem("synthetic")));
+                context.WaitForPost(); form.Dispose();
+                context.Until(() => work.IsCompleted); work.GetAwaiter().GetResult();
+            }));
+        }
+        Run("a superseded generation cannot register a download", () => Fixture((form, host, db, context) =>
+        {
+            int requests = 0; Call(form, "ResetThreadManagement", 1); int old = (int)Get(form, "m_batchGeneration");
+            Call(form, "ResetThreadManagement", 1);
+            using (var finder = InjectFinder(downloader, r => { requests++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("") }; }))
+            {
+                Call(form, "FindBestIconForDashboard", finder, old);
+                Assert(requests == 0);
+            }
+        }));
         Run("closing cancels a body read that ignores cancellation", () => Fixture((form, host, db, context) =>
         {
             var stream = new SlowStream();
@@ -177,7 +225,7 @@ internal static partial class Program
             using (var finder = InjectFinder(downloader, r => { requests++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("") }; }))
             {
                 Call(form, "ResetThreadManagement", 1); Call(form, "InitiateThreadStopping");
-                Call(form, "FindBestIconForDashboard", finder);
+                Call(form, "FindBestIconForDashboard", finder, (int)Get(form, "m_batchGeneration"));
                 Assert(requests == 0 && ((HashSet<BestIconFinder>)Get(form, "m_activeDownloads")).Count == 0);
             }
         }));

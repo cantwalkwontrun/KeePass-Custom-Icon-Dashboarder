@@ -83,6 +83,7 @@ namespace CustomIconDashboarderPlugin
                     }
                 });
             }
+            UpdateStartAndStopButtons();
         }
 
         private void RunWorker(int generation, Action operation)
