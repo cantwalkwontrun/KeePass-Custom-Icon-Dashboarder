@@ -297,7 +297,8 @@ internal static partial class Program
             using (var stream = new MemoryStream())
             {
                 graphics.Clear(Color.FromArgb(255, 40 + i * 20, 100, 200 - i * 14));
-                graphics.DrawString(((char)('A' + i)).ToString(), SystemFonts.CaptionFont, Brushes.White, 20, 20);
+                using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                    graphics.DrawString(((char)('A' + i)).ToString(), SystemFonts.CaptionFont, Brushes.White, new RectangleF(0, 0, image.Width, image.Height), format);
                 image.Save(stream, System.Drawing.Imaging.ImageFormat.Png); data = stream.ToArray();
             }
             var icon = new PwCustomIcon(new PwUuid(true), data); db.CustomIcons.Add(icon);
