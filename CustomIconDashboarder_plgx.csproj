@@ -7,7 +7,7 @@
     <OutputType>Library</OutputType>
     <RootNamespace>CustomIconDashboarderPlugin</RootNamespace>
     <AssemblyName>CustomIconDashboarderPlugin</AssemblyName>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <TargetFrameworkProfile>
     </TargetFrameworkProfile>
     <AppDesignerFolder>Properties</AppDesignerFolder>
@@ -57,6 +57,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
@@ -64,6 +65,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BestIconFinder.cs" />
+    <Compile Include="SafeIconDownloader.cs" />
+    <Compile Include="IconImageLimits.cs" />
     <Compile Include="HtmlAgilityPack\crc32.cs" />
     <Compile Include="HtmlAgilityPack\EncodingFoundException.cs" />
     <Compile Include="HtmlAgilityPack\HtmlAttribute.cs" />
@@ -124,6 +127,8 @@
     <Compile Include="IconChooser.cs" />
     <Compile Include="IconStatsHandler.cs" />
     <Compile Include="DashboarderForm.Workers.cs" />
+    <Compile Include="DashboarderForm.Layout.cs" />
+    <Compile Include="DashboarderForm.Resources.cs" />
     <Compile Include="DashboarderForm.cs">
       <SubType>Form</SubType>
     </Compile>

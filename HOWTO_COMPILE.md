@@ -16,8 +16,8 @@ To reference a different KeePass executable, pass `/p:KeePassPath="absolute path
 
 The output is `bin/Release/CustomIconDashboarderPlugin.dll`, built for AnyCPU and .NET Framework 4.8. LomsonLib sources are compiled into the same DLL, matching the single-assembly approach of the original PLGX; no separate LomsonLib binary is required.
 
-The regression harness constructs unshown forms and synthetic in-memory databases. It does not open or save an existing password database or request real favicons. A successful build/test run does not replace manual testing inside an isolated KeePass instance.
+The normal regression harness constructs unshown forms and synthetic in-memory databases. The optional `--preview` argument followed by a local PNG output path creates an off-screen synthetic preview; an optional third argument supplies the Fluent Theme v1.5.2026.1111 DLL. It does not open or save an existing password database or request real favicons. A successful build/test run does not replace manual testing inside an isolated KeePass instance.
 
 For a manual test, use a disposable database and keep only one version of Dashboarder in the test instance's `Plugins` directory. Do not load the original PLGX and the development DLL together.
 
-The PLGX project template includes the new worker helper. The inherited `createPlgx.cmd` has not been used or validated for this fork; it contains machine-specific copy/cleanup commands. No rebuilt PLGX or binary release has been published.
+Both project templates target .NET Framework 4.8 and include the layout, resource, worker and safe-download helpers. The inherited `createPlgx.cmd` has not been used or validated for this fork; it contains machine-specific copy/cleanup commands. No rebuilt PLGX or binary release has been published.

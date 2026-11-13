@@ -336,7 +336,7 @@ namespace LomsonLib.UI
 				ImageList.ImageCollection ic = imgl.Images;
 				result = new List<Image>();
 				for (int i = 0; i<ic.Count; i++ ) {
-					Image img = ResizedImage(ic[i],width,height);
+					Image img = new Bitmap(ic[i], new Size(width, height));
 					result.Add( img );
 				}
 				return result;

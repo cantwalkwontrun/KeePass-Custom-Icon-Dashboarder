@@ -34,6 +34,7 @@ namespace CustomIconDashboarderPlugin
 		protected override void Dispose(bool disposing)
 		{
 			if (disposing) {
+                ReleaseDashboardResources();
 				if (components != null) {
 					components.Dispose();
 				}

@@ -21,6 +21,8 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.IO;
+using System.Text;
 using System.Drawing;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
@@ -32,7 +34,7 @@ namespace CustomIconDashboarderPlugin
 	/// <summary>
 	/// Find the best icon of a web site from its url.
 	/// </summary>
-	public class BestIconFinder
+	public class BestIconFinder : IDisposable
 	{
 		#region Static elements
 		
@@ -41,22 +43,9 @@ namespace CustomIconDashboarderPlugin
 		/// </summary>
 		
 		
-		public static void InitClass() {
-            //  Enable TLS 1.1 (768), TLS 1.2 (3072) and TLS 1.3 (12288)
-            ServicePointManager.SecurityProtocol =
-                (SecurityProtocolType)768 | 
-                (SecurityProtocolType)3072 | 
-                (SecurityProtocolType)12288;
-        }
+        // Retained for plugin integrations; TLS is configured only on our HTTP handler.
+        public static void InitClass() { }
 
-        ~BestIconFinder() {
-			client.Dispose();
-		}
-		
-		private const string REQUEST_USER_AGENT = "Mozilla/5.0 (Windows 6.1; rv:27.0) Gecko/20100101 Firefox/27.0";
-		private const string REQUEST_HEADER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-		private const int REQUEST_TIMEOUT = 10000;
-		
 		private const string alphabetUC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 		private const string alphabetLC = "abcdefghijklmnopqrstuvwxyz";
 		
@@ -68,11 +57,9 @@ namespace CustomIconDashboarderPlugin
 			"//link[translate(@rel,'" + alphabetUC + "','" + alphabetLC +"')='apple-touch-icon-precomposed']"
 		};
 		
-		private static Dictionary<Uri,Image> imageCache = new Dictionary<Uri, Image>{};
-		private static object lckImageCache = new object();
-		private static Dictionary<Uri, CachedURIRequestResult> uriRequestCache = new Dictionary<Uri, CachedURIRequestResult>{};
-		private static object lckUriRequestCache = new object();
-		
+        private readonly HashSet<Uri> testedImageUris = new HashSet<Uri>();
+        private volatile bool disposed;
+        private readonly object lifetimeLock = new object();
 		#endregion		
 		
 		
@@ -84,7 +71,7 @@ namespace CustomIconDashboarderPlugin
 		public FinderResult Result {get; private set; }
 		public string Details {get;set; }
 		public int NbRequestCacheInvoke {get; private set; }
-		private MyWebClient client;
+		private SafeIconDownloader client;
 
 		public List<ImageInfo> ListImageInfo {get; private set;} // All image and URI
 		public int IndexOfBestImage {get; private set; }
@@ -94,10 +81,12 @@ namespace CustomIconDashboarderPlugin
 		
 		public BestIconFinder(Uri siteUri)
 		{
+            if (siteUri == null) throw new ArgumentNullException("siteUri");
+            if (!SafeIconDownloader.IsAllowed(siteUri)) throw new ArgumentException("Only HTTP/HTTPS addresses without embedded credentials are supported.", "siteUri");
 			this.OriginalSiteUri = siteUri;
 			if ( (siteUri.Scheme.ToLower() == "http") ||
 			    (siteUri.Scheme.ToLower() == "https" ) ){
-				this.SiteUri = new Uri(siteUri.Scheme + "://" +siteUri.DnsSafeHost);
+				this.SiteUri = new Uri(siteUri.GetLeftPart(UriPartial.Authority) + "/");
 				this.Result = new FinderResult(FinderResult.RESULT_NO_URL);
 			} else {
 			    this.SiteUri = null;
@@ -108,7 +97,7 @@ namespace CustomIconDashboarderPlugin
 			this.IndexOfBestImage = -1;
 			this.ListImageInfo = new List<ImageInfo>();
 			this.NbRequestCacheInvoke = 0;
-			client = new MyWebClient();
+			client = new SafeIconDownloader();
 		}
 		
 		public BestIconFinder()
@@ -120,7 +109,7 @@ namespace CustomIconDashboarderPlugin
 			this.IndexOfBestImage = -1;
 			this.ListImageInfo = new List<ImageInfo>();
 			this.NbRequestCacheInvoke = 0;
-			client = new MyWebClient();
+			client = new SafeIconDownloader();
 		}
 
         #region Embeded Factory
@@ -156,13 +145,14 @@ namespace CustomIconDashboarderPlugin
 			if (this.BestImage == null) { // try with www
 				
 				Uri testURI = this.SiteUri;
-				if ( ! testURI.Host.StartsWith("www.") ) {
+				if (testURI.HostNameType == UriHostNameType.Dns && !testURI.IsLoopback && !testURI.Host.StartsWith("www.")) {
 					FindBestIconForURI( new Uri( 
-					   this.SiteUri.Scheme + "://www." + this.SiteUri.DnsSafeHost ));
+					   this.SiteUri.Scheme + "://www." + this.SiteUri.DnsSafeHost + (this.SiteUri.IsDefaultPort ? "" : ":" + this.SiteUri.Port) ));
 				}
 			}
 			
-			string rootDomain = URLUtility.RootDomain(this.SiteUri.AbsoluteUri);
+			string rootDomain = this.SiteUri.HostNameType == UriHostNameType.Dns && !this.SiteUri.IsLoopback && this.SiteUri.IsDefaultPort
+                ? URLUtility.RootDomain(this.SiteUri.AbsoluteUri) : null;
 			
 			if (! string.IsNullOrEmpty(rootDomain)) {
 				if (this.BestImage == null) { // try with root domain prefix
@@ -174,7 +164,7 @@ namespace CustomIconDashboarderPlugin
 				}
 			    }
 			
-			if (this.RootUriForIco != null) {
+			if (this.RootUriForIco != null && this.RootUriForIco.HostNameType == UriHostNameType.Dns && !this.RootUriForIco.IsLoopback && this.RootUriForIco.IsDefaultPort) {
 				if (this.BestImage == null) { // try with host prefix
 					FindBestIconForURI( new Uri( 
 					       this.RootUriForIco.Scheme + "://" + this.RootUriForIco.Host) );
@@ -242,175 +232,73 @@ namespace CustomIconDashboarderPlugin
 		/// <summary>
 		/// Test Image URI and store in Best Image if quality is better 
 		/// </summary>
-		public void TestImageUri (Uri uriToBeTested)
-		{
-			this.myLogger.LogDebug("Test " + uriToBeTested.AbsoluteUri);
-			byte[] pictureData = null;
-			Image downloadedImage = null;
-			
-			bool imageWasInCache = false;
-			
-			lock (lckImageCache) {
-				if (imageCache.ContainsKey( uriToBeTested ) ) {
-					downloadedImage = imageCache[uriToBeTested];
-					if (downloadedImage != null) 
-						downloadedImage = (Image)downloadedImage.Clone();
-					imageWasInCache = true;
-				}
-			}
-			
-			if (!imageWasInCache) {
-				try {
-					pictureData = client.DownloadData( uriToBeTested);
-					pictureData = PreparedIconBytesArrayToBeParsed( pictureData );
-						
-				   try {
-				   	downloadedImage = KeePassLib.Utility.GfxUtil.LoadImage( pictureData );
-				   }
-				   catch (Exception e) {
-				   	this.myLogger.LogError("Error while parsing image " + uriToBeTested.AbsoluteUri + System.Environment.NewLine
-				   	                      + e.Message);
-				   }
-				   
-				}
-				catch (WebException) {
-					this.myLogger.LogError( "Error while getting icon " 
-					                       + uriToBeTested.AbsoluteUri);
-				}
-				catch (NotSupportedException) {
-					this.myLogger.LogError( "Not Supported Exception while getting icon " 
-					                       + uriToBeTested.AbsoluteUri);
-				}
-				
-				lock (lckImageCache) {
-					if (!imageCache.ContainsKey(uriToBeTested)) {
-						imageCache.Add(uriToBeTested, downloadedImage);
-					}
-					if (downloadedImage != null) 
-						downloadedImage = (Image)downloadedImage.Clone();
-					
-				}
-			}
-			
-		   if (downloadedImage != null) {
-			      // It is necessary to clone image to avoid concurrent access during post operation.
-				  // For example, error should occured if image is resized by several thread in the same time.
-	 		    this.myLogger.LogDebug( "Size " + downloadedImage.Width + " x " + downloadedImage.Height );
-			    this.ListImageInfo.Add( new ImageInfo( downloadedImage,uriToBeTested.AbsolutePath) );
-			    if ( (this.BestImage == null ) ||
-			       (CompareImageQuality( downloadedImage, this.BestImage) == 1) ) {
-				   	this.BestImage = downloadedImage;
-				   	this.IndexOfBestImage = this.ListImageInfo.Count - 1;
-				   	this.myLogger.LogInfo("-->stored as the best image");
-			    }
-		   }
-		}
-		
+        public void TestImageUri(Uri uriToBeTested)
+        {
+            if (disposed || ListImageInfo.Count >= 8 || testedImageUris.Count >= 24 ||
+                !SafeIconDownloader.IsAllowed(uriToBeTested, this.SiteUri) || !testedImageUris.Add(uriToBeTested)) return;
+            try
+            {
+                Uri finalUri;
+                byte[] data = client.Download(uriToBeTested, this.SiteUri, SafeIconDownloader.MaxImageBytes, out finalUri);
+                data = PreparedIconBytesArrayToBeParsed(data);
+                IconImageLimits.Validate(data);
+                using (Image decoded = KeePassLib.Utility.GfxUtil.LoadImage(data))
+                {
+                    if (decoded.Width > 2048 || decoded.Height > 2048 || (long)decoded.Width * decoded.Height > 4 * 1024 * 1024)
+                        throw new WebException("Icon dimensions are too large.");
+                    int width = Math.Max(1, Math.Min(256, decoded.Width));
+                    int height = Math.Max(1, decoded.Height * width / decoded.Width);
+                    if (height > 256) { height = 256; width = Math.Max(1, decoded.Width * height / decoded.Height); }
+                    Image image = new Bitmap(decoded, width, height);
+                    lock (lifetimeLock)
+                    {
+                        if (disposed) { image.Dispose(); return; }
+                        ListImageInfo.Add(new ImageInfo(image, finalUri.GetLeftPart(UriPartial.Path)));
+                        if (BestImage == null || CompareImageQuality(image, BestImage) > 0)
+                        { BestImage = image; IndexOfBestImage = ListImageInfo.Count - 1; }
+                    }
+                }
+            }
+            catch (Exception error)
+            {
+                // Untrusted image data and network errors must not terminate KeePass.
+                myLogger.LogWarn("Icon unavailable: " + error.GetType().Name);
+            }
+        }
+
 		public void GetIconLinks() {
 			GetIconLinksForURI(this.SiteUri);
 		}
 		
-		public void GetIconLinksForURI(Uri param_Uri)
-		{
-			this.myLogger.LogDebug("Start findIconLinks");
-			this.myLogger.LogDebug("URL = " + param_Uri.AbsoluteUri);
-			
-			this.myLogger.Indent();
+        public void GetIconLinksForURI(Uri uri)
+        {
+            ListUriIcons = new List<Uri>();
+            if (!SafeIconDownloader.IsAllowed(uri, SiteUri))
+            { Result = new FinderResult(FinderResult.RESULT_NO_URL); return; }
+            try
+            {
+                HtmlDocument page;
+                Uri finalUri = GetURIOfSite(uri, out page);
+                RootUriForIco = new Uri(finalUri.GetLeftPart(UriPartial.Authority) + "/");
+                foreach (string xpath in xPathToTest)
+                {
+                    var nodes = page.DocumentNode.SelectNodes(xpath);
+                    if (nodes == null) continue;
+                    foreach (HtmlNode node in nodes)
+                    {
+                        Uri icon = SafeIconDownloader.Resolve(finalUri, node.GetAttributeValue("href", ""));
+                        if (icon != null && !ListUriIcons.Contains(icon) && ListUriIcons.Count < 12) ListUriIcons.Add(icon);
+                    }
+                }
+                Result = new FinderResult(FinderResult.RESULT_OK);
+            }
+            catch (Exception error)
+            {
+                Result = new FinderResult(FinderResult.RESULT_HTML_NOT_FOUND);
+                myLogger.LogWarn("Page unavailable: " + error.GetType().Name);
+            }
+        }
 
-			Uri testedUri = param_Uri;
-			
-			// Get HTML
-			HtmlAgilityPack.HtmlDocument htmlPage = null;
-			Uri fullUri = null;
-			
-			bool uriInCache = false;
-			lock(lckUriRequestCache) {
-				if (uriRequestCache.ContainsKey( param_Uri )) {
-					CachedURIRequestResult curr = uriRequestCache[param_Uri];
-					fullUri = curr.FullUri;
-					htmlPage = curr.Html;
-					this.NbRequestCacheInvoke++;
-					uriInCache = true;
-				}
-			}
-			
-			if (!uriInCache) {
-				try {
-					fullUri = GetURIOfSite(testedUri, out htmlPage);
-				}
-				catch ( WebException ) {
-					this.Result = new FinderResult(FinderResult.RESULT_HTML_NOT_FOUND);
-					this.myLogger.Unindent();
-					this.myLogger.LogDebug("End findIconLinks");
-					return;				
-				}
-				catch ( Exception ) {
-					this.Result = new FinderResult(FinderResult.RESULT_HTML_PARSING);
-					this.myLogger.Unindent();
-					this.myLogger.LogDebug("End findIconLinks");
-					return;
-				}
-				lock (lckUriRequestCache) {
-					if (!uriRequestCache.ContainsKey( param_Uri )) {
-						var curr = new CachedURIRequestResult(fullUri, htmlPage);
-						uriRequestCache.Add( param_Uri, curr);
-					}
-				}
-			}
-		
-			if ( htmlPage == null) {
-				this.Result = new FinderResult(FinderResult.RESULT_HTML_NOT_FOUND);
-				this.myLogger.Unindent();
-				this.myLogger.LogDebug("End findIconLinks");
-				return;
-			}
-			this.RootUriForIco = new Uri ( fullUri.Scheme + "://" + fullUri.DnsSafeHost );
-			this.myLogger.LogDebug("Root Url = " + this.RootUriForIco.AbsoluteUri);
-			
-			// Get XPath
-			HtmlNode hnn = htmlPage.DocumentNode;
-			//this.myLogger.LogDebugIndented(hnn.OuterHtml);
-			this.ListUriIcons = new List<Uri>();
-			foreach (String currentXpath in xPathToTest) 
-			{
-				this.myLogger.LogInfo("Testing " + currentXpath);
-				this.myLogger.Indent();
-				
-				HtmlNodeCollection hnc = hnn.SelectNodes(currentXpath);
-				if ( (hnc == null) || (hnc.Count == 0) ) {
-					this.myLogger.LogInfo("Node not found for xpath " + currentXpath);
-				}
-				
-				else {
-					
-					foreach (HtmlNode hn in hnc) {
-						string relativeUrlPicture = hn.GetAttributeValue("href", "");
-						if ( relativeUrlPicture.Length == 0 ) {
-							this.myLogger.LogWarn("Zero Length URL found for xpath ");
-						}
-						else {
-							var uriPicture = new Uri(this.RootUriForIco, relativeUrlPicture);
-							
-							if (!this.ListUriIcons.Exists((Uri myUri) => myUri == uriPicture)) {
-								this.ListUriIcons.Add( uriPicture);
-							}
-							
-							this.myLogger.LogDebug("URL = '" + uriPicture.AbsoluteUri + "'");
-						}
-					}
-					
-				}
-				this.myLogger.Unindent();
-			}
-			
-			this.Result = new FinderResult( FinderResult.RESULT_OK );
-			this.myLogger.Unindent();
-			this.myLogger.LogDebug("End findIconLinks");
-			
-		}
-		
-		
-		
 		/// <summary>
 		/// Compare Quality of two images.
 		/// </summary>
@@ -434,165 +322,66 @@ namespace CustomIconDashboarderPlugin
         /// </summary>
         /// <param name="fullURI">The URI.</param>
         /// <returns></returns>
-        private Uri GetURIOfSite(Uri initialURI, out HtmlDocument hdoc) 
+        private Uri GetURIOfSite(Uri initialURI, out HtmlDocument document)
         {
-        	HtmlWeb hw = new HtmlWeb();
-            hw.UserAgent = REQUEST_USER_AGENT;
-           
-            hdoc = null;
-            Uri responseURI = null; 
-			
-            Uri nextUri = initialURI;
-            try
+            Uri uri = initialURI;
+            document = null;
+            for (int refresh = 0; refresh <= 3; refresh++)
             {
-                int counter = 0; // Protection from cyclic redirect 
-                do
-                {
-                    // A cookie container is needed for some sites to work
-                    hw.PreRequest += PreRequest_EventHandler;
-
-                    // HtmlWeb.Load will follow 301 and 302 redirects to alternate URIs
-                   hdoc = hw.Load(nextUri.AbsoluteUri);
-                   responseURI = hw.ResponseUri;
-
-                    // Old school meta refreshes need to parsed
-                    nextUri = GetMetaRefreshLink(responseURI, hdoc);
-                    counter++;
-                } while (nextUri != null && counter < 16); // Sixteen redirects would be more than enough.
-
-
+                Uri finalUri;
+                byte[] data = client.Download(uri, SiteUri, SafeIconDownloader.MaxHtmlBytes, out finalUri);
+                document = new HtmlDocument();
+                document.OptionMaxNestedChildNodes = 128;
+                document.LoadHtml(Encoding.UTF8.GetString(data));
+                Uri next = GetMetaRefreshLink(finalUri, document);
+                if (next == null) return finalUri;
+                if (refresh == 3) throw new WebException("Too many page refreshes.");
+                uri = next;
             }
-            catch (Exception e) {
-            	this.myLogger.LogError("error while getting url " + nextUri.AbsoluteUri 
-            	                       + " " + e.Message);
-            }
-            return responseURI;
-		}
-        
-        private Uri GetMetaRefreshLink(Uri uri, HtmlAgilityPack.HtmlDocument hdoc)
-        {
-            HtmlNodeCollection metas = hdoc.DocumentNode.SelectNodes("/html/head/meta");
-            string redirect = null;
-
-            if (metas == null)
-            {
-                return null;
-            }
-
-            for (int i = 0; i < metas.Count; i++)
-            {
-                HtmlNode node = metas[i];
-                try
-                {
-                    HtmlAttribute httpeq = node.Attributes["http-equiv"];
-                    HtmlAttribute content = node.Attributes["content"];
-                    if (httpeq.Value.ToLower().Equals("location") || httpeq.Value.ToLower().Equals("refresh"))
-                    {
-                        if (content.Value.ToLower().Contains("url"))
-                        {
-                            Match match = Regex.Match(content.Value.ToLower(), @".*?url[\s=]*(\S+)");
-                            if (match.Success)
-                            {
-                                redirect = match.Captures[0].ToString();
-                                redirect = match.Groups[1].ToString();
-                            }
-                        }
-
-                    }
-                }
-                catch (Exception) { }
-            }
-            
-            if (String.IsNullOrEmpty(redirect))
-            {
-                return null;
-            }
-
-            return new Uri(uri, redirect);
+            throw new WebException("Unsupported page refresh.");
         }
-       
-        
+
+        private Uri GetMetaRefreshLink(Uri uri, HtmlDocument document)
+        {
+            var metas = document.DocumentNode.SelectNodes("//meta[@http-equiv]");
+            if (metas == null) return null;
+            foreach (HtmlNode node in metas)
+            {
+                string kind = node.GetAttributeValue("http-equiv", "");
+                if (!kind.Equals("refresh", StringComparison.OrdinalIgnoreCase) && !kind.Equals("location", StringComparison.OrdinalIgnoreCase)) continue;
+                Match match = Regex.Match(node.GetAttributeValue("content", ""), @"\burl\s*=\s*(.+)$", RegexOptions.IgnoreCase);
+                if (match.Success) return SafeIconDownloader.Resolve(uri, match.Groups[1].Value.Trim().Trim('\'', '"'));
+            }
+            return null;
+        }
+
 		/// <summary>
 		/// Prepare bytes array representing an icon to be parsed by libraries
 		///  (provided by KP and MS)
 		/// </summary>
 		/// <description>
-		/// Pad with zero if length of array is not sufficient according to header.
+		/// Reject truncated ICO payloads before passing data to image libraries.
 		/// </description>
 		/// <param name="batbp">Byte array to be parsed</param>
 		/// <returns></returns>
 		/// Inspired by the method KeePassLib.Utility.GsfxUtil.UnpackIco of KeePass v2.30
-		private byte[] PreparedIconBytesArrayToBeParsed(byte[] batbp) {
-			if (batbp == null) { 
-				myLogger.LogWarn("PreparedIconBytesArrayToBeParsed: Byte array to be prepared is Null");
-				return batbp;
-			}
-
-			const int SizeICONDIR = 6;
-			const int SizeICONDIRENTRY = 16;
-
-			if (BitConverter.ToInt32(new byte[] { 1, 2, 3, 4 },
-			                         0) != 0x04030201) {
-				myLogger.LogWarn("PreparedIconBytesArrayToBeParsed: Not Little Endian detected");
-			}
-
-			if (batbp.Length < SizeICONDIR) return null;
-			if (BitConverter.ToUInt16(batbp, 0) != 0)	return batbp; // Reserved, 0 if icon
-			if (BitConverter.ToUInt16(batbp, 2) != 1)	return batbp; // ICO type, 1 if icon
-
-			int nbIcon = BitConverter.ToUInt16(batbp, 4);
-			if (nbIcon < 0) { 
-				myLogger.LogWarn("PreparedIconBytesArrayToBeParsed: nb of Icons is not positive");;
-			}
-
-			int cbDir = SizeICONDIR + (nbIcon * SizeICONDIRENTRY);
-			if (batbp.Length < cbDir)
-				return null;
-
-			int iOffset = SizeICONDIR;
-			int padLength = 0;
-			for (int i = 0; i < nbIcon; ++i) {
-				int dataSize = BitConverter.ToInt32(batbp, iOffset + 8);
-				int iStartImgData = BitConverter.ToInt32(batbp, iOffset + 12);
-				
-				if ((iStartImgData + dataSize) > batbp.Length) {
-					padLength = iStartImgData + dataSize - batbp.Length;
-					
-				}
-				
-				iOffset += SizeICONDIRENTRY;
-			}
-			
-			if (padLength == 0 ) {
-				return batbp;
-			}
-			else {
-				myLogger.LogWarn("PreparedIconBytesArrayToBeParsed: Padding file with "
-				                 + padLength.ToString() + " leading zero(s)");;
-			
-				var padArray = new byte[padLength];
-				for (int ii = 0; ii < padLength; ii++) {
-					padArray[ii] = 0;
-				}
-				var result = new byte[batbp.Length + padLength];
-				Array.Copy(batbp, 0, result, 0, batbp.Length);
-				Array.Copy(padArray, 0, result, batbp.Length, padLength);
-				
-				return result;				
-			}
-			
-		}
-
-        private bool PreRequest_EventHandler(HttpWebRequest request)
+        private byte[] PreparedIconBytesArrayToBeParsed(byte[] data)
         {
-            request.CookieContainer = new System.Net.CookieContainer();
-            request.Accept = REQUEST_HEADER_ACCEPT;
-            request.Headers.Add(HttpRequestHeader.AcceptLanguage, "*");
-            request.Timeout = REQUEST_TIMEOUT;
-            
-            return true;
+            if (data == null || data.Length < 6) throw new InvalidDataException("Invalid icon data.");
+            if (BitConverter.ToUInt16(data, 0) == 0 && BitConverter.ToUInt16(data, 2) == 1)
+            {
+                int count = BitConverter.ToUInt16(data, 4);
+                if (count == 0 || count > 128 || data.Length < 6 + count * 16) throw new InvalidDataException("Invalid ICO directory.");
+                for (int i = 0; i < count; i++)
+                {
+                    int entry = 6 + i * 16;
+                    uint size = BitConverter.ToUInt32(data, entry + 8), offset = BitConverter.ToUInt32(data, entry + 12);
+                    if ((ulong)offset + size > (ulong)data.Length) throw new InvalidDataException("Truncated ICO image.");
+                }
+            }
+            return data;
         }
-		
+
 		private sealed class MyLogger {
 			
 			private int nbIndent;
@@ -661,13 +450,21 @@ namespace CustomIconDashboarderPlugin
 			}
 		}
 		
-		public void Dispose() {
-			if (this.BestImage != null) {
-				this.BestImage.Dispose();
-			}
-		}
-		
-	
+        public void Dispose()
+        {
+            lock (lifetimeLock)
+            {
+                if (disposed) return;
+                disposed = true;
+                var owned = new HashSet<Image>();
+                foreach (var info in ListImageInfo) if (info.ImgData != null) owned.Add(info.ImgData);
+                foreach (Image image in owned) image.Dispose();
+                ListImageInfo.Clear();
+                BestImage = null;
+            }
+            if (client != null) client.Dispose();
+        }
+
 //       // Set "UnsafeHeaderParsing" flags. Usefull to retrieve information from several sites
 //       // try www dot geni dot com    
 //       // to be used with "using System.Reflection;" in header
@@ -702,43 +499,7 @@ namespace CustomIconDashboarderPlugin
 //		} 
 //
 	
-		public class MyWebClient : WebClient
-		{
-			private readonly CookieContainer m_container = new CookieContainer();
-	
-			protected override WebRequest GetWebRequest(Uri address)
-			{
-                // enhance chance to get favicon by setting some specifics parameters in request
-                // Sample of web site and parameters
-                //    Header Accept  - usefull for www dot akamai dot com
-                WebRequest request = null;
-                try { request = base.GetWebRequest(address); }
-                catch (Exception) { } // address is not well formed
-                
-				var webRequest = request as HttpWebRequest;
-				if (webRequest != null) {
-					webRequest.Accept = REQUEST_HEADER_ACCEPT;
-		            webRequest.UserAgent = REQUEST_USER_AGENT;
-		            webRequest.Headers.Add(HttpRequestHeader.AcceptLanguage, "*");
-		            webRequest.Timeout = REQUEST_TIMEOUT;
-					webRequest.CookieContainer = m_container;
-				}
-				return request;
-			}
-		}
-	
-	
-		private sealed class CachedURIRequestResult {
-			public Uri FullUri {get; private set; }
-			public HtmlDocument Html {get; private set; }
-			
-			public CachedURIRequestResult (Uri fullUri, HtmlDocument html) {
-				this.FullUri = fullUri;
-				this.Html = html;
-			}
-		
-		}	
-		
+
 	}
 	
 	public sealed class FinderResult {

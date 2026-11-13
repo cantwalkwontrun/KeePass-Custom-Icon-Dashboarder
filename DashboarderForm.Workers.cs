@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Collections.Generic;
 using System.Threading;
 using System.Windows.Forms;
 using KeePassLib;
@@ -14,8 +15,13 @@ namespace CustomIconDashboarderPlugin
         private PwDatabase m_database;
         private PwGroup m_databaseRoot;
         private volatile bool m_closing;
+        private volatile bool m_batchCancelled;
         private volatile int m_batchGeneration;
         private int m_failedWorkers;
+        private string m_lastOperationSummary;
+        private readonly Queue<Action> m_pendingWorkers = new Queue<Action>();
+        private int m_scheduledWorkers;
+        private const int MaximumWorkers = 4;
 
         private bool RunOnUi(Action action)
         {
@@ -58,7 +64,25 @@ namespace CustomIconDashboarderPlugin
         private void QueueBatchWork(Action<ListViewItem> operation, ListViewItem item)
         {
             int generation = m_batchGeneration;
-            ThreadPool.QueueUserWorkItem(delegate { RunWorker(generation, delegate { operation(item); }); });
+            m_pendingWorkers.Enqueue(delegate { RunWorker(generation, delegate { operation(item); }); });
+            StartPendingWorkers();
+        }
+
+        private void StartPendingWorkers()
+        {
+            while (!m_closing && batchStatus != BatchStatusType.Stopping && m_scheduledWorkers < MaximumWorkers && m_pendingWorkers.Count > 0)
+            {
+                Action work = m_pendingWorkers.Dequeue();
+                m_scheduledWorkers++;
+                ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try { work(); }
+                    finally
+                    {
+                        RunOnUi(delegate { m_scheduledWorkers--; StartPendingWorkers(); });
+                    }
+                });
+            }
         }
 
         private void RunWorker(int generation, Action operation)
@@ -68,7 +92,7 @@ namespace CustomIconDashboarderPlugin
             {
                 if (!RunOnUi(delegate
                 {
-                    if (generation != m_batchGeneration || batchStatus == BatchStatusType.Stopping || !IsCurrentDatabase()) return;
+                    if (generation != m_batchGeneration || m_batchCancelled || batchStatus == BatchStatusType.Stopping || !IsCurrentDatabase()) return;
                     UpdateNbThread(1);
                     started = true;
                 }) || !started) return;

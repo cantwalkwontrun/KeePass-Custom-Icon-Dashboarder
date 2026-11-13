@@ -6,9 +6,9 @@ lang: en-GB
 
 ## Maintenance fork
 
-This development fork fixes worker-thread database changes, stale icon results, worker failure handling and closing during downloads. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
+This development fork adds a readable, resizable dashboard with measured columns, theme-aware headers and compact previews. It also fixes multi-entry icon assignment, download cancellation, resource ownership and unsafe or excessive favicon responses. See [REVIEW.md](./REVIEW.md) for verification and limitations, and [HOWTO_COMPILE.md](./HOWTO_COMPILE.md) for the local build procedure.
 
-The local DLL identifies itself as 1.3.1.0. No fork binary release has been published. The installation link below points to the original upstream PLGX, which does not contain these changes. Update checks are disabled in the development build until a fork release and matching manifest exist.
+The local DLL identifies itself as 1.4.0.0. No fork binary release has been published. The installation link below points to the original upstream PLGX, which does not contain these changes. Update checks are disabled in the development build until a fork release and matching manifest exist.
 
 ## Original project
 

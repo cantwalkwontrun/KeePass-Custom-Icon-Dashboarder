@@ -9,5 +9,6 @@
     <Reference Include="KeePass"><HintPath>$(KeePassPath)</HintPath></Reference>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
   </ItemGroup>
 </Project>

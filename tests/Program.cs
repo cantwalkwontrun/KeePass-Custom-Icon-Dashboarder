@@ -23,13 +23,13 @@ using KeePassLib.Keys;
 using KeePassLib.Security;
 using KeePassLib.Serialization;
 
-internal static class Program
+internal static partial class Program
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static int _passed, _failed;
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         Run("worker entry changes and events stay on UI thread", () => Fixture((form, host, db, context) =>
         {
@@ -117,7 +117,7 @@ internal static class Program
             Task worker = Task.Run(() => Call(form, "RunWorker", generation, (Action)(() => { throw new InvalidOperationException("synthetic failure"); })));
             context.Until(() => worker.IsCompleted); worker.GetAwaiter().GetResult();
             Assert((int)Get(form, "nbActiveThread") == 0 && (int)Get(form, "m_failedWorkers") == 1);
-            Assert(((Label)Get(form, "lbl_status")).Text.Contains("Failed: 1"));
+            Assert(((Label)Get(form, "lbl_status")).Text.Contains("1 failed"));
         }));
         Run("queued jobs keep batch in progress", () => Fixture((form, host, db, context) =>
         {
@@ -154,18 +154,19 @@ internal static class Program
         {
             var plugin = new CustomIconDashboarderPluginExt(); Assert(!plugin.Initialize(null)); plugin.Terminate(); plugin.Terminate(); plugin.Dispose();
         });
+        RunEnhancedTests(args);
         Console.WriteLine($"Passed: {_passed}; failed: {_failed}");
         Environment.ExitCode = _failed == 0 ? 0 : 1;
     }
 
-    private static void Fixture(Action<DashboarderForm, FakeHost, PwDatabase, PumpContext> test)
+    private static void Fixture(Action<DashboarderForm, FakeHost, PwDatabase, PumpContext> test, bool preview = false)
     {
         var previous = SynchronizationContext.Current; var context = new PumpContext();
         SynchronizationContext.SetSynchronizationContext(context);
         var db = NewDatabase(); var host = new FakeHost { Database = db };
         try
         {
-            using (var form = new DashboarderForm(host))
+            using (var form = preview ? new PreviewDashboarder(host) : new DashboarderForm(host))
             {
                 Set(form, "m_iconChooserIndexerFromEntry", new Dictionary<PwEntry, IconChooser>());
                 Set(form, "m_iconChooserIndexerFromIcon", new Dictionary<PwUuid, IconChooser>());
@@ -177,9 +178,9 @@ internal static class Program
     private static Bitmap IconImage() { var image = new Bitmap(8, 8); using (var graphics = Graphics.FromImage(image)) graphics.Clear(Color.CornflowerBlue); return image; }
     private static PwEntry AddEntry(PwDatabase db) { var entry = new PwEntry(true, true); entry.Strings.Set(PwDefs.PasswordField, new ProtectedString(true, "synthetic-fixture")); entry.AddTag("pwned"); entry.CustomData.Set("pwned-count", "42"); db.RootGroup.AddEntry(entry, true); return entry; }
     private static PwDatabase NewDatabase() { var db = new PwDatabase(); db.New(new IOConnectionInfo { Path = "synthetic-fixture.kdbx" }, new CompositeKey()); db.Modified = false; return db; }
-    private static object Call(object instance, string method, params object[] args) => instance.GetType().GetMethod(method, Private | BindingFlags.DeclaredOnly).Invoke(instance, args);
-    private static object Get(object instance, string field) => instance.GetType().GetField(field, Private).GetValue(instance);
-    private static void Set(object instance, string field, object value) => instance.GetType().GetField(field, Private).SetValue(instance, value);
+    private static object Call(object instance, string method, params object[] args) => typeof(DashboarderForm).GetMethod(method, Private | BindingFlags.DeclaredOnly).Invoke(instance, args);
+    private static object Get(object instance, string field) => typeof(DashboarderForm).GetField(field, Private).GetValue(instance);
+    private static void Set(object instance, string field, object value) => typeof(DashboarderForm).GetField(field, Private).SetValue(instance, value);
     private static void Assert(bool condition) { if (!condition) throw new Exception("Assertion failed."); }
     private static void Run(string name, Action test) { try { test(); _passed++; Console.WriteLine("PASS " + name); } catch (Exception error) { _failed++; Console.WriteLine("FAIL " + name + ": " + error.GetBaseException()); } }
     private sealed class PumpContext : SynchronizationContext
